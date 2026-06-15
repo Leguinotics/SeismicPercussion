@@ -227,5 +227,5 @@ with chart_col:
     ]
     st.line_chart(un_normalized, use_container_width=True)
     st.caption("---")
-    st.caption("💡 **Concept & Methodology Credit:** Designed by [Your Name]. "
+    st.caption("💡 **Concept & Methodology Credit:** Designed by CHIDANAND BADATYA. "
                "Developed to explore raw seismic data through multi-sensory sonification.")
