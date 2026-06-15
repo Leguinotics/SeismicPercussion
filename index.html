@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { 
+    margin:0; padding:6px; background:#111; 
+    font-family:sans-serif; color:#FFF; 
+    overflow:hidden; 
+  }
+  .box { 
+    background:#1A1A1A; border:1px solid #333; 
+    padding:8px; border-radius:6px; 
+    font-size:12px; margin-bottom:6px; 
+  }
+  .grid { 
+    display:flex; flex-wrap:wrap; 
+    gap:10px; align-items:center; 
+  }
+  .btn { 
+    background:#FF2E93; border:none; color:#fff; 
+    padding:6px 12px; border-radius:4px; 
+    cursor:pointer; font-size:11px; 
+    font-weight:bold; 
+  }
+  .btn:hover { background:#d61c74; }
+  .scroll { 
+    width:100vw; height:calc(100vh - 65px); 
+    border:1px solid #333; border-radius:6px; 
+    background:#050505; overflow:hidden; 
+    position:relative; box-sizing:border-box;
+  }
+  .cube-viewport {
+    position: absolute; top: 15px; right: 20px;
+    width: 140px; height: 140px; perspective: 500px;
+    z-index: 200; pointer-events: none;
+  }
+  .cube-scene {
+    width: 100%; height: 100%; position: relative;
+    transform-style: preserve-3d;
+    transform: rotateX(-20deg) rotateY(35deg);
+    transition: transform 0.4s ease;
+  }
+  .cube-face {
+    position: absolute; width: 80px; height: 80px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1.5px solid #666; line-height: 80px;
+    text-align: center; font-size: 11px; 
+    font-weight: bold; color: #aaa; 
+    text-transform: uppercase;
+  }
+  .f-front  { transform:rotateY(0deg) translateZ(40px); }
+  .f-back   { transform:rotateY(180deg) translateZ(40px); }
+  .f-left   { transform:rotateY(-90deg) translateZ(40px); }
+  .f-right  { transform:rotateY(90deg) translateZ(40px); }
+  .f-top    { transform:rotateX(90deg) translateZ(40px); }
+  .f-bottom { transform:rotateX(-90deg) translateZ(40px); }
+  .slice-plane {
+    position: absolute; width: 78px; height: 78px;
+    top: 1px; left: 1px; pointer-events: none;
+    transform-style: preserve-3d; opacity: 0.85;
+    background: rgba(255, 46, 147, 0.65);
+    border: 2px solid #FF2E93;
+    transition: transform 0.2s ease;
+  }
+</style>
+</head>
+<body>
+
+<div class="box">
+  <div class="grid">
+    <span style="color:#FF2E93; font-weight:bold;">
+      [+/-] CONTROLS:
+    </span>
+    <button class="btn" style="background:#00E676; color:#000;" 
+            onclick="forceAudioUnlock()">
+      [>] Play Audio
+    </button>
+    <button class="btn" onclick="zoomCenter(1.25)">
+      [+] In
+    </button>
+    <button class="btn" style="background:#444;" 
+            onclick="zoomCenter(0.8)">
+      [-] Out
+    </button>
+    <button class="btn" style="background:#222;" 
+            onclick="resetTransform()">
+      [X] Center
+    </button>
+  </div>
+</div>
+
+<div class="scroll" id="container">
+  <div class="cube-viewport">
+    <div id="orientationCube" class="cube-scene">
+      <div class="cube-face f-front">In</div>
+      <div class="cube-face f-back">In</div>
+      <div class="cube-face f-left">Cross</div>
+      <div class="cube-face f-right">Cross</div>
+      <div class="cube-face f-top">Time</div>
+      <div class="cube-face f-bottom">Time</div>
+      <div id="liveSlicePlane" class="slice-plane"></div>
+    </div>
+  </div>
+
+  <canvas id="seismicCanvas" 
+          style="position:absolute; left:0; top:0; 
+                 transform-origin:0 0; 
+                 cursor:crosshair;"></canvas>
+  <div id="hud" style="position:absolute; top:10px; 
+       left:10px; background:rgba(0,0,0,0.95); 
+       padding:10px 14px; border-radius:4px; 
+       font-size:12px; font-family:monospace; 
+       pointer-events:none; border:1px solid #555; 
+       line-height:1.6; min-width:280px; 
+       z-index:100; color:#FFF;">
+    X: -- | Y: -- <br> Raw Amp: -- <br> 
+    Mapped: -- <br> Sound: --
+  </div>
+</div>
+<script>
+const matrix = __MATRIX_DATA__; 
+const globalScalarMax = __MAX_SCALAR__; 
+const numSamples = matrix ? matrix.length : 200;
+const numTraces = (matrix && matrix.length > 0) ? 
+  matrix.length : 150;
+
+const container = document.getElementById('container');
+const canvas = document.getElementById('seismicCanvas');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+const cubeScene = document.getElementById('orientationCube');
+const livePlane = document.getElementById('liveSlicePlane');
+
+// RESIZING ENGINE: Maps canvas to 100% of workspace height & width
+const parentRect = container.getBoundingClientRect();
+const cellWidth = Math.max(1.5, parentRect.width / numTraces);
+const cellHeight = Math.max(1.5, parentRect.height / numSamples);
+
+const baseWidth = numTraces * cellWidth;
+const baseHeight = numSamples * cellHeight;
+
+let scale = 1.0; let panX = 0; let panY = 0;
+let isDragging = false; let startX = 0; let startY = 0;
+
+const soundMap = {
+  cat1: "__CAT1__", cat2: "__CAT2__", cat3: "__CAT3__", 
+  cat4: "__CAT4__", cat5: "__CAT5__"
+};
+
+function update3DTrackerCube() {
+  const currentAxis = "__SLICE_TYPE__"; 
+  const rawCurrentValue = __LINE_NUMBER__;
+  const pythonArrayValues = __INLINE_OR_XLINE_ARRAY_DATA__; 
+  
+  const minVal = Math.min(...pythonArrayValues);
+  const maxVal = Math.max(...pythonArrayValues);
+  const denom = (maxVal - minVal) > 0 ? (maxVal - minVal) : 1;
+  const ratio = (rawCurrentValue - minVal) / denom;
+  const boundedRatio = Math.min(Math.max(0, ratio), 1);
+  
+  // Maps percentage to 80px cube boundaries [-40px to +40px]
+  const offsetDistance = (boundedRatio * 80) - 40;
+
+  if (currentAxis.includes("Inline")) {
+    cubeScene.style.transform = "rotateX(-20deg) rotateY(35deg)";
+    livePlane.style.background = "rgba(255, 46, 147, 0.65)";
+    livePlane.style.borderColor = "#FF2E93";
+    livePlane.style.transform = 
+      "rotateY(0deg) translateZ(" + offsetDistance + "px)";
+  } else if (currentAxis.includes("Crossline")) {
+    cubeScene.style.transform = "rotateX(-20deg) rotateY(125deg)";
+    livePlane.style.background = "rgba(41, 182, 246, 0.65)";
+    livePlane.style.borderColor = "#29B6F6";
+    livePlane.style.transform = 
+      "rotateY(90deg) translateZ(" + offsetDistance + "px)";
+  } else {
+    cubeScene.style.transform = "rotateX(-75deg) rotateY(45deg)";
+    livePlane.style.background = "rgba(0, 230, 118, 0.65)";
+    livePlane.style.borderColor = "#00E676";
+    livePlane.style.transform = 
+      "rotateX(90deg) translateZ(" + (-offsetDistance) + "px)";
+  }
+}
+
+function initCanvasSize() {
+  canvas.width = baseWidth; canvas.height = baseHeight;
+}
+
+function draw() {
+  if (!matrix || matrix.length === 0) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let r = 0; r < numSamples; r++) {
+    for (let c = 0; c < numTraces; c++) {
+      const v = matrix[r][c] || 0; 
+      let col = 'rgb(255,255,255)'; 
+      if (v > 0) {
+        let i = Math.floor(255 * (1 - v));
+        col = "rgb(255," + i + "," + i + ")";
+      } else if (v < 0) {
+        let i = Math.floor(255 * (1 - Math.abs(v)));
+        col = "rgb(" + i + "," + i + ",255)";
+      }
+      ctx.fillStyle = col; 
+      ctx.fillRect(
+        c * cellWidth, r * cellHeight, 
+        Math.ceil(cellWidth), Math.ceil(cellHeight)
+      );
+    }
+  }
+}
+function applyTransform() {
+  scale = Math.min(Math.max(0.05, scale), 20.0);
+  canvas.style.transform = 
+    "translate(" + panX + "px," + panY + "px) scale(" + scale + ")";
+}
+
+function resetTransform() {
+  scale = 1.0; panX = 0; panY = 0; applyTransform();
+}
+
+function zoomCenter(factor) {
+  const rect = container.getBoundingClientRect();
+  applyZoom(rect.width / 2, rect.height / 2, factor);
+}
+
+function applyZoom(mouseX, mouseY, factor) {
+  const canvasX = (mouseX - panX) / scale;
+  const canvasY = (mouseY - panY) / scale;
+  scale *= factor;
+  scale = Math.min(Math.max(0.05, scale), 20.0);
+  panX = mouseX - canvasX * scale;
+  panY = mouseY - canvasY * scale;
+  applyTransform();
+}
+
+initCanvasSize(); draw(); 
+resetTransform(); update3DTrackerCube();
+
+let aCtx = null; let lastT = 0;
+function initAudio() { 
+  if (!aCtx) {
+    aCtx = new (
+      window.AudioContext || window.webkitAudioContext
+    )(); 
+  }
+}
+
+function forceAudioUnlock() {
+  initAudio();
+  if (aCtx && aCtx.state === 'suspended') {
+    aCtx.resume().then(() => { console.log("Sound active!"); });
+  }
+}
+
+// Global window trigger solves the browser security unlock block
+window.addEventListener('click', () => { forceAudioUnlock(); });
+
+function triggerSynth(type, volume) {
+  if (type === 'mute' || !aCtx || aCtx.state === 'suspended') return;
+  const now = aCtx.currentTime;
+  if (type === 'kick') {
+    let o = aCtx.createOscillator(); let gR = aCtx.createGain(); 
+    o.connect(gR); gR.connect(aCtx.destination);
+    o.frequency.setValueAtTime(65, now); o.frequency.exponentialRampToValueAtTime(22, now+0.28);
+    gR.gain.setValueAtTime(volume * 0.75, now); gR.gain.exponentialRampToValueAtTime(0.001, now+0.28);
+    o.start(now); o.stop(now + 0.29);
+
+    let cO = aCtx.createOscillator(); let gC = aCtx.createGain();
+    cO.type = 'triangle'; cO.connect(gC); gC.connect(aCtx.destination);
+    cO.frequency.setValueAtTime(250, now); cO.frequency.exponentialRampToValueAtTime(80, now+0.02);
+    gC.gain.setValueAtTime(volume * 0.25, now); gC.gain.exponentialRampToValueAtTime(0.001, now+0.02);
+    cO.start(now); cO.stop(now + 0.03);
+  } else if (type === 'snare') {
+    let b = aCtx.createBuffer(1, aCtx.sampleRate * 0.08, aCtx.sampleRate);
+    let d = b.getChannelData(0); for (let i=0; i<d.length; i++) d[i] = Math.random()*2-1;
+    let s = aCtx.createBufferSource(); s.buffer = b;
+    let f = aCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 1500; 
+    let g = aCtx.createGain(); g.gain.setValueAtTime(volume * 0.35, now); g.gain.exponentialRampToValueAtTime(0.01, now+0.08);
+    s.connect(f); f.connect(g); g.connect(aCtx.destination); s.start();
+  } else if (type === 'racktom') {
+    let o = aCtx.createOscillator(); let g = aCtx.createGain(); o.connect(g); g.connect(aCtx.destination);
+    o.frequency.setValueAtTime(180, now); o.frequency.exponentialRampToValueAtTime(80, now+0.15);
+    g.gain.setValueAtTime(volume * 0.5, now); g.gain.exponentialRampToValueAtTime(0.01, now+0.15);
+    o.start(); o.stop(now+0.16);
+  } else if (type === 'floortom') {
+    let o = aCtx.createOscillator(); let g = aCtx.createGain(); o.connect(g); g.connect(aCtx.destination);
+    o.frequency.setValueAtTime(110, now); o.frequency.exponentialRampToValueAtTime(50, now+0.25);
+    g.gain.setValueAtTime(volume * 0.6, now); g.gain.exponentialRampToValueAtTime(0.01, now+0.25);
+    o.start(); o.stop(now+0.26);
+  } else if (type === 'hihat') {
+    let o = aCtx.createOscillator(); let g = aCtx.createGain(); o.type = 'triangle'; o.connect(g); g.connect(aCtx.destination);
+    o.frequency.setValueAtTime(10000, now); g.gain.setValueAtTime(volume * 0.2, now); g.gain.exponentialRampToValueAtTime(0.01, now+0.04);
+    o.start(); o.stop(now+0.05);
+  } else if (type === 'ride') {
+    let o = aCtx.createOscillator(); let g = aCtx.createGain(); o.type = 'sine'; o.connect(g); g.connect(aCtx.destination);
+    o.frequency.setValueAtTime(9500, now); g.gain.setValueAtTime(volume * 0.15, now); g.gain.exponentialRampToValueAtTime(0.01, now+0.35);
+    o.start(); o.stop(now+0.36);
+  } else if (type === 'crash') {
+    let b = aCtx.createBuffer(1, aCtx.sampleRate * 0.4, aCtx.sampleRate);
+    let d = b.getChannelData(0); for (let i=0; i<d.length; i++) d[i] = Math.random()*2-1;
+    let s = aCtx.createBufferSource(); s.buffer = b;
+    let f = aCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 8000; 
+    let g = aCtx.createGain(); g.gain.setValueAtTime(volume * 0.28, now); g.gain.exponentialRampToValueAtTime(0.01, now+0.38);
+    s.connect(f); f.connect(g); g.connect(aCtx.destination); s.start();
+  } else if (type === 'cymbal') {
+    let o = aCtx.createOscillator(); let g = aCtx.createGain(); o.type = 'triangle'; o.connect(g); g.connect(aCtx.destination);
+    o.frequency.setValueAtTime(11500, now); g.gain.setValueAtTime(volume * 0.18, now); g.gain.exponentialRampToValueAtTime(0.01, now+0.5);
+    o.start(); o.stop(now+0.51);
+  }
+}
+
+function getReadableText(type) {
+  if (type === 'kick') return 'Kick-Bass (Pedal Drum)'; if (type === 'snare') return 'Snare Drum';
+  if (type === 'racktom') return 'Rack Tom'; if (type === 'floortom') return 'Floor Tom';
+  if (type === 'hihat') return 'Hi-Hats'; if (type === 'ride') return 'Ride Cymbal';
+  if (type === 'crash') return 'Crash Cymbal'; if (type === 'cymbal') return 'Generic Cymbal';
+  return 'Track Muted';
+}
+
+container.addEventListener('mousedown', (e) => {
+  if (e.button === 0) { isDragging = true; startX = e.clientX - panX; startY = e.clientY - panY; }
+});
+window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; } });
+container.addEventListener('wheel', (e) => {
+  e.preventDefault(); const rect = container.getBoundingClientRect();
+  applyZoom(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.15 : 0.85);
+}, { passive: false });
+
+let lastSentTrace = -1;
+container.addEventListener('mousemove', (e) => {
+  const rect = container.getBoundingClientRect(); const mX = e.clientX - rect.left; const mY = e.clientY - rect.top;
+  if (isDragging) { panX = e.clientX - startX; panY = e.clientY - startY; applyTransform(); return; }
+  
+  const localX = (mX - panX) / scale; const localY = (mY - panY) / scale;
+  const tIdx = Math.floor(localX / cellWidth); const sIdx = Math.floor(localY / cellHeight);
+
+  if (tIdx >= 0 && tIdx < numTraces && sIdx >= 0 && sIdx < numSamples) {
+    const amp = matrix[sIdx][tIdx] || 0; const rawAmp = amp * globalScalarMax;
+    let act = 'mute';
+    if (amp > 0.60) act = soundMap.cat1; else if (amp >= 0.15) act = soundMap.cat2;
+    else if (amp >= -0.15) act = soundMap.cat3; else if (amp >= -0.60) act = soundMap.cat4; else act = soundMap.cat5;
+    
+    const lines = ["X: " + tIdx + " | Y: " + sIdx, "Raw Amp: " + rawAmp.toFixed(2), "Mapped: " + amp.toFixed(4), "Sound: " + getReadableText(act)];
+    hud.innerHTML = lines.join("<br>");
+    const now = aCtx ? aCtx.currentTime : 0; if (now - lastT > 0.08) { lastT = now; triggerSynth(act, Math.abs(amp)); }
+    if (tIdx !== lastSentTrace) {
+      lastSentTrace = tIdx; const col = []; for(let r=0; r<numSamples; r++) col.push(matrix[r][tIdx] || 0);
+      window.parent.postMessage({type: 'SEISMIC_HOVER_UPDATE', index: tIdx, values: col}, '*');
+    }
+  }
+});
+</script>
+</body>
+</html>
