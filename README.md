@@ -31,3 +31,8 @@ This project runs on Python 3.9+ and relies on the following open-source framewo
 * `numpy`
 * `segyio`
 
+## 🛠️ Built With
+
+* [Streamlit](https://streamlit.io) - The open-source data app framework used to build the user interface.
+* [Segyio](https://github.com) - Python library for SEGY file interactions.
+
