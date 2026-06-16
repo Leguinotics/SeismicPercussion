@@ -1,2 +1,11 @@
+# Ignore heavy geophysics data files
+*.sgy
+*.segy
+
+# Ignore system python caches
 __pycache__/
 *.pyc
+
+# Ignore obsolete component build directories
+earthbeat_addon/
+seismic_component/
