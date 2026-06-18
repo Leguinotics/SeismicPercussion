@@ -80,7 +80,16 @@ c2 = st.session_state.get("c2_choice", "⚡ Snare Drum")
 c3 = st.session_state.get("c3_choice", "⏸️ Mute Track")
 c4 = st.session_state.get("c4_choice", "⏱️ Hi-Hats")
 c5 = st.session_state.get("c5_choice", "🥁 Kick-Bass")
-if st.session_state.is_mock: st.sidebar.caption("ℹ️ Running in Preview Simulation Mode.")
+with st.sidebar:
+    st.markdown("---")
+    st.markdown(
+        "<div style='font-size: 11.5px; color: #888; line-height: 1.5; font-family: sans-serif;'>"
+        "💡 <strong>Concept & Methodology Credit:</strong> "
+        "Designed by <strong>[Chidanand Badatya]</strong>. "
+        "Developed to explore raw seismic data through real-time audio sonification."
+        "</div>",
+        unsafe_allow_html=True
+    )
 
 seismic_data, max_scalar = extract_seismic_3d_slice(
     st.session_state.filepath, 
